@@ -1,6 +1,9 @@
 package main
 
 func main() {
-	bc := NewBlockchain()
-	defer bc.db.Close()
+	blockchain := NewBlockchain()
+	defer blockchain.db.Close()
+
+	cli := CLI{blockchain}
+	cli.Run()
 }

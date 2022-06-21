@@ -1,6 +1,6 @@
 # TChain
 
-## 基本原型
+## Development
 
 ### 区块
 
@@ -17,6 +17,7 @@ type Block struct {
 ...
 
 ### 持久化
+使用 [bbolt](https://github.com/etcd-io/bbolt) 对区块链进行持久化
 
 #### 数据库结构
 > Bitcoin Core 使用两个 `bucket` 来存储数据：
@@ -67,3 +68,33 @@ type Block struct {
     3. 将创世块哈希保存为最后一个块的哈希
     4. 创建一个新的 `Blockchain` 实例，初始时 `tip` 指向创世块
 > tip: 末梢、尖端，这里 tip 表示存储的最后一个块的哈希
+
+## Build
+
+在终端中执行
+```bash
+$ sudo ./build.sh
+```
+将会得到可在终端运行的可执行文件
+
+|名称|操作系统|
+| ---- | ---- |
+| tchain-amd | Intel MacOS |
+| tchain-arm | ARM MacOS |
+| tchain-windows | Windows |
+
+以 `tchain-amd` 为例，进入到可执行文件所在目录：
+
+```bash
+$ chmod 777 tchain-amd
+```
+
+向区块链中写入数据：
+```bash
+$ ./tchain-amd addblock -data <DATA_YOU_WANT_TO_RECORD_IN_BLOCKCHAIN>
+```
+
+打印区块链：
+```bash
+$ ./tchain-amd printchain
+```
