@@ -19,7 +19,7 @@ type ProofOfWork struct {
 	target *big.Int
 }
 
-// 将 target 初始化为 1 转换成大整数，然后左移 256 - targetBits 位
+// NewProofOfWork 将 target 初始化为 1 的大整数，然后左移 256 - targetBits 位，返回 ProofOfWork
 func NewProofOfWork(b *Block) *ProofOfWork {
 	target := big.NewInt(1)
 	target.Lsh(target, uint(256-targetBits))
@@ -32,7 +32,7 @@ func NewProofOfWork(b *Block) *ProofOfWork {
 	return pow
 }
 
-// 工作量证明 将 target ，nonce 与 Block 进行合并, nonce 计数器，一个密码学术语
+// prepareData 返回添加了 Nonce 的字节切片
 func (pow *ProofOfWork) prepareData(nonce int) []byte {
 	data := bytes.Join(
 		[][]byte{
@@ -48,7 +48,7 @@ func (pow *ProofOfWork) prepareData(nonce int) []byte {
 	return data
 }
 
-// 寻找有效哈希
+// Run 寻找有效哈希
 func (pow *ProofOfWork) Run() (int, []byte) {
 	// hash 的整形表示
 	var hashInt big.Int
@@ -79,7 +79,7 @@ func (pow *ProofOfWork) Run() (int, []byte) {
 	return nonce, hash[:]
 }
 
-// 验证工作量，只要哈希小于目标就是有效工作量
+// Validate 验证哈希是否为小于目标的有效哈希
 func (pow *ProofOfWork) Validate() bool {
 	var hashInt big.Int
 
