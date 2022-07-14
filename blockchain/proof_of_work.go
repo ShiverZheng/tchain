@@ -1,4 +1,4 @@
-package main
+package blockchain
 
 import (
 	"bytes"
@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"tchain/common"
 )
 
 // 难度值，表示哈希的前 24 位必须是 0
@@ -38,9 +39,9 @@ func (pow *ProofOfWork) prepareData(nonce int) []byte {
 		[][]byte{
 			pow.block.PrevBlockHash,
 			pow.block.HashTransactions(),
-			IntToHex(pow.block.Timestamp),
-			IntToHex(int64(targetBits)),
-			IntToHex(int64(nonce)),
+			common.IntToHex(pow.block.Timestamp),
+			common.IntToHex(int64(targetBits)),
+			common.IntToHex(int64(nonce)),
 		},
 		[]byte{},
 	)

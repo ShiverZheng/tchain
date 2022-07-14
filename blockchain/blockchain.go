@@ -1,7 +1,10 @@
-package main
+package blockchain
 
 import (
+	"bytes"
+	"crypto/ecdsa"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -16,13 +19,7 @@ const genesisCoinbaseData = "Blockchain Research Group"
 // Blockchain 保存一系列区块
 type Blockchain struct {
 	tip []byte
-	db  *bbolt.DB
-}
-
-// BlockchainIterator 用于迭代区块链块
-type BlockchainIterator struct {
-	currentHash []byte
-	db          *bbolt.DB
+	DB  *bbolt.DB
 }
 
 // dbExists 检查数据库是否存在
@@ -66,9 +63,16 @@ func NewBlockchain(address string) *Blockchain {
 func (bc *Blockchain) MineBlock(transactions []*Transaction) {
 	var lastHash []byte
 
+	// 在一笔交易被放入一个块之前进行验证：
+	for _, tx := range transactions {
+		if !bc.VerifyTransaction(tx) {
+			log.Panic("ERROR: Invalid transaction")
+		}
+	}
+
 	// BboltDB 只读事务
 	// 从数据库中获取最后一个块的哈希，然后用它来挖出一个新的块的哈希
-	err := bc.db.View(func(tx *bbolt.Tx) error {
+	err := bc.DB.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(blocksBucket))
 		lastHash = b.Get([]byte("l"))
 
@@ -83,7 +87,7 @@ func (bc *Blockchain) MineBlock(transactions []*Transaction) {
 
 	// BboltDB 读写事物
 	// 向数据库写入最后一个块的哈希
-	err = bc.db.Update(func(tx *bbolt.Tx) error {
+	err = bc.DB.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(blocksBucket))
 		err := b.Put(newBlock.Hash, newBlock.Serialize())
 		if err != nil {
@@ -152,32 +156,11 @@ func CreateBlockchain(address string) *Blockchain {
 
 // Iterator 迭代器
 func (blockchain *Blockchain) Iterator() *BlockchainIterator {
-	return &BlockchainIterator{blockchain.tip, blockchain.db}
-}
-
-// Next 从 tip 开始返回链中的下一个块
-func (i *BlockchainIterator) Next() *Block {
-	var block *Block
-
-	err := i.db.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(blocksBucket))
-		encodedBlock := b.Get(i.currentHash)
-		block = DeserializeBlock(encodedBlock)
-
-		return nil
-	})
-
-	if err != nil {
-		log.Panic(err)
-	}
-
-	i.currentHash = block.PrevBlockHash
-
-	return block
+	return &BlockchainIterator{blockchain.tip, blockchain.DB}
 }
 
 // FindUnspentTransactions 返回包含未使用输出的交易列表
-func (blockchain *Blockchain) FindUnspentTransactions(address string) []Transaction {
+func (blockchain *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []Transaction {
 	var unspentTXs []Transaction
 	spentTXOs := make(map[string][]int)
 	bci := blockchain.Iterator()
@@ -204,7 +187,7 @@ func (blockchain *Blockchain) FindUnspentTransactions(address string) []Transact
 
 				// 如果一个输出能够被当前搜索 UTXO 的同一地址锁定
 				// 那么这就是需要的输出
-				if out.CanBeUnlockedWith(address) {
+				if out.IsLockedWithKey(pubKeyHash) {
 					unspentTXs = append(unspentTXs, *tx)
 				}
 			}
@@ -214,7 +197,7 @@ func (blockchain *Blockchain) FindUnspentTransactions(address string) []Transact
 			// 这不适用于 coinbase 交易，因为它们不解锁输出
 			if !tx.IsCoinbase() {
 				for _, in := range tx.VIn {
-					if in.CanUnlockOutputWith(address) {
+					if in.UsesKey(pubKeyHash) {
 						inTxID := hex.EncodeToString(in.TxID)
 						spentTXOs[inTxID] = append(spentTXOs[inTxID], in.VOut)
 					}
@@ -232,14 +215,14 @@ func (blockchain *Blockchain) FindUnspentTransactions(address string) []Transact
 }
 
 // FindUTXOs 查找并返回所有未使用的交易输出
-func (blockchain *Blockchain) FindUTXOs(address string) []TXOutput {
+func (blockchain *Blockchain) FindUTXOs(pubKeyHash []byte) []TXOutput {
 	var UTXOs []TXOutput
 	// 从交易中剥离 UTXO
-	unspentTransactions := blockchain.FindUnspentTransactions(address)
+	unspentTransactions := blockchain.FindUnspentTransactions(pubKeyHash)
 
 	for _, tx := range unspentTransactions {
 		for _, out := range tx.Vout {
-			if out.CanBeUnlockedWith(address) {
+			if out.IsLockedWithKey(pubKeyHash) {
 				UTXOs = append(UTXOs, out)
 			}
 		}
@@ -249,9 +232,9 @@ func (blockchain *Blockchain) FindUTXOs(address string) []TXOutput {
 }
 
 // FindSpendableOutputs 查找地址中满足 amount 的 UTXO
-func (blockchain *Blockchain) FindSpendableOutputs(address string, amount int) (int, map[string][]int) {
+func (blockchain *Blockchain) FindSpendableOutputs(pubKeyHash []byte, amount int) (int, map[string][]int) {
 	unspentOutputs := make(map[string][]int)
-	unspentTXs := blockchain.FindUnspentTransactions(address)
+	unspentTXs := blockchain.FindUnspentTransactions(pubKeyHash)
 	accumulation := 0
 
 Work:
@@ -259,7 +242,7 @@ Work:
 		txID := hex.EncodeToString(tx.ID)
 
 		for outIndex, out := range tx.Vout {
-			if out.CanBeUnlockedWith(address) && accumulation < amount {
+			if out.IsLockedWithKey(pubKeyHash) && accumulation < amount {
 				accumulation += out.Value
 				unspentOutputs[txID] = append(unspentOutputs[txID], outIndex)
 
@@ -271,4 +254,55 @@ Work:
 	}
 
 	return accumulation, unspentOutputs
+}
+
+// FindTransaction 根据交易 ID 查找并返回交易
+func (bc *Blockchain) FindTransaction(ID []byte) (Transaction, error) {
+	bci := bc.Iterator()
+
+	for {
+		block := bci.Next()
+
+		for _, tx := range block.Transactions {
+			if bytes.Equal(tx.ID, ID) {
+				return *tx, nil
+			}
+		}
+
+		if len(block.PrevBlockHash) == 0 {
+			break
+		}
+	}
+
+	return Transaction{}, errors.New("Transaction is not found")
+}
+
+// SignTransaction 传入一笔交易，找到它引用的交易，然后对它进行签名
+func (bc *Blockchain) SignTransaction(tx *Transaction, privKey ecdsa.PrivateKey) {
+	prevTXs := make(map[string]Transaction)
+
+	for _, vin := range tx.VIn {
+		prevTX, err := bc.FindTransaction(vin.TxID)
+		if err != nil {
+			log.Panic(err)
+		}
+		prevTXs[hex.EncodeToString(prevTX.ID)] = prevTX
+	}
+
+	tx.Sign(privKey, prevTXs)
+}
+
+// VerifyTransaction 传入一笔交易，找到它引用的交易，然后对它进行验证
+func (bc *Blockchain) VerifyTransaction(tx *Transaction) bool {
+	prevTXs := make(map[string]Transaction)
+
+	for _, vin := range tx.VIn {
+		prevTX, err := bc.FindTransaction(vin.TxID)
+		if err != nil {
+			log.Panic(err)
+		}
+		prevTXs[hex.EncodeToString(prevTX.ID)] = prevTX
+	}
+
+	return tx.Verify(prevTXs)
 }

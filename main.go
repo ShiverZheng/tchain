@@ -1,6 +1,8 @@
 package main
 
+import "tchain/cli"
+
 func main() {
-	cli := CLI{}
+	cli := cli.CLI{}
 	cli.Run()
 }
