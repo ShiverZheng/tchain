@@ -4,6 +4,7 @@
 ## 工作原理
 
 ### 交易
+
 交易是加密货币系统中最重要的部分，加密货币中的其他一切都是为了确保交易可以被创建、在网络上传播、验证，并最终添加到全局交易分类账本（区块链）中。
 
 > 以下内容以比特币的实现为参考
@@ -75,8 +76,7 @@ UTXO (Unspent Transaction Output)，未花费的输出。
 
 商家也不想收到黑钱，所以商家也会去查顾客的账，过程是一样的，就不再这里赘述，其实查账这个过程不需要任何收款方来进行，UTXO模型会去做这个事情。在UTXO的模型里，想要交易就需要向前追溯UTXO的来源确定这个UTXO是否存在，一笔交易会消耗先前的存在的UTXO，并创建新的UTXO以备未来的交易消耗。通过这种方式，一定数量的比特币价值在不同所有者之间转移，并在交易链中消耗和创建UTXO。
 
-*被交易消费的UTXO被称为交易输入，由交易创建的UTXO被称为交易输出。每一笔交易的来源(输入)都来自于上一笔交易的输出。*
-
+*被交易消费的UTXO被称为交易输入，由交易创建的UTXO被称为交易输出。每一笔交易的来源(输入)都来自于上一笔交易的输出。UTXO交易过程跟踪的是每个Token的所有权的转移。*
 
 
 所以没有人能真正拥有比特币，你看到的地址账户里的比特币，是”钱包“帮你在UTXO模型里算出来的，其实它的“价值”还躺在上一笔交易里呢！
@@ -90,6 +90,27 @@ UTXO (Unspent Transaction Output)，未花费的输出。
 > 严格来讲，先产生输出，因为币基交易（创造新比特币）没有输入，它是无中生有。
 
 
+### 地址
+
+[1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa](https://explorer.btc.com/btc/address/1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa)
+
+这是世界上首个比特币地址，据说属于比特币发明人中本聪。
+
+比特币地址是公开的，如果你想转给某人一些BTC，那么就需要知道其地址。
+
+这些地址并不代表钱包，仅仅是具备可读格式的公钥。
+
+在比特币世界中，你的ID是一个密钥对（公/私钥），该密钥对需要保存在你的电脑或者其他你可以直接存取到它的设备。
+
+比特币通过密码学算法来创建密钥对，从而保证在不能直接存取该密钥情况下，没人可以动你的钱。
+
+公钥加密算法使用一对密钥：公钥和私钥。
+
+公钥可以给其他人，而私钥不应该给其他人，你的私钥就代表你本人。
+
+本质上，比特币钱包就是一个密钥对。当你安装钱包客户端或者比特币客户端创建一个新地址时，一个密钥对将会被创建。在比特币世界，谁拥有密钥，谁就可以掌控属于该密钥的钱。
+
+公钥和私钥仅仅是一些随机字节序列，人们无法直接读取，因此比特币使用一个算法用于将公钥转换成可读的字符串——[助记词](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki)。
 
 ## Development
 
@@ -160,6 +181,17 @@ type Block struct {
     4. 创建一个新的 `Blockchain` 实例，初始时 `tip` 指向创世块
 > tip: 末梢、尖端，这里 tip 表示存储的最后一个块的哈希
 
+### 钱包
+
+#### 地址
+通过 Base58 将公钥转换成可读格式，包括以下步骤：
+
+1. 使用 `RIPEMD16(SHA256(PubKey))` 对公钥进行两次哈希，生成 `pubKeyHash`
+2. 将版本信息追加到 `pubKeyHash` 之前，生成 `versionedPayload`，此时 `versionedPayload = version + pubKeyHash`
+3. 使用 `SHA256(SHA256(versionedPayload))` 进行两次哈希得到一个哈希值，取该值的前 `n` 个字节最终生成 `checksum`
+4. 将 `checksum` 追加到 `versionedPayload` 之后，生成编码前的地址，此时 `address = version + pubKeyHash + checksum`
+5. 最后使用 `Base58` 对 `version + pubKeyHash + checksum` 编码生成最终的地址
+
 ## Build
 
 在终端中执行
@@ -180,19 +212,29 @@ $ sudo ./build.sh
 $ chmod 777 tchain-amd
 ```
 
+创建钱包，生成一个地址，多次调用可以创建多个地址
+```bash
+$ ./tchain-amd createwallet
+```
+
+获取创建的所有的地址
+```bash
+$ ./tchain-amd listaddresses
+```
+
 生成创世块，向第一个用户发放Token：
 ```bash
-$ ./tchain-amd createblockchain -address <YOUR_NAME>
+$ ./tchain-amd createblockchain -address <YOUR_ADDRESS>
 ```
 
 获取Token余额：
 ```bash
-$ ./tchain-amd getbalance -address <YOUR_NAME>
+$ ./tchain-amd getbalance -address <YOUR_ADDRESS>
 ```
 
 向其他人发送Token：
 ```bash
-$ ./tchain-amd send -from <YOUR_NAME> -to <OTHER_NAME> -amount <AMOUNT>
+$ ./tchain-amd send -from <YOUR_ADDRESS> -to <YOUR_ADDRESS> -amount <AMOUNT>
 ```
 
 打印区块链：
