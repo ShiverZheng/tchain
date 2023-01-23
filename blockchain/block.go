@@ -2,9 +2,9 @@ package blockchain
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/gob"
 	"log"
+	"tchain/merkle"
 	"time"
 )
 
@@ -48,15 +48,17 @@ func DeserializeBlock(d []byte) *Block {
 
 // HashTransactions 返回块中包含的交易的哈希
 func (b *Block) HashTransactions() []byte {
-	var txHashes [][]byte
-	var txHash [32]byte
+	var transactions [][]byte
 
 	for _, tx := range b.Transactions {
-		txHashes = append(txHashes, tx.ID)
+		// 交易被序列化（使用 encoding/gob）
+		transactions = append(transactions, tx.Serialize())
 	}
-	txHash = sha256.Sum256(bytes.Join(txHashes, []byte{}))
+	// 使用序列后的交易构建一个 Merkle 树
+	mTree := merkle.NewMerkleTree(transactions)
 
-	return txHash[:]
+	// 树根将会作为块交易的唯一标识符
+	return mTree.RootNode.Data
 }
 
 // NewBlock 基于 Data 和 PrevBlockHash 计算得到当前块的哈希，创建并返回区块
