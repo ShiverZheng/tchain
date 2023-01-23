@@ -12,9 +12,9 @@ import (
 	"go.etcd.io/bbolt"
 )
 
-const dbFile = "blockchain.db"
-const blocksBucket = "blocks"
-const genesisCoinbaseData = "Blockchain Research Group"
+const DB_FILE = "blockchain.db"
+const BLOCKS_BUCKET = "blocks"
+const GENESIS_COINBASE_DATA = "Blockchain Research Group"
 
 // Blockchain 保存一系列区块
 type Blockchain struct {
@@ -24,7 +24,7 @@ type Blockchain struct {
 
 // dbExists 检查数据库是否存在
 func dbExists() bool {
-	if _, err := os.Stat(dbFile); os.IsNotExist(err) {
+	if _, err := os.Stat(DB_FILE); os.IsNotExist(err) {
 		return false
 	}
 
@@ -32,20 +32,20 @@ func dbExists() bool {
 }
 
 // NewBlockchain 创建一个有创世块的区块链
-func NewBlockchain(address string) *Blockchain {
+func NewBlockchain() *Blockchain {
 	if !dbExists() {
 		fmt.Println("No existing blockchain found. Create one first.")
 		os.Exit(1)
 	}
 
 	var tip []byte
-	db, err := bbolt.Open(dbFile, 0600, nil)
+	db, err := bbolt.Open(DB_FILE, 0600, nil)
 	if err != nil {
 		log.Panic(err)
 	}
 
 	err = db.Update(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(blocksBucket))
+		b := tx.Bucket([]byte(BLOCKS_BUCKET))
 		tip = b.Get([]byte("l"))
 
 		return nil
@@ -60,7 +60,7 @@ func NewBlockchain(address string) *Blockchain {
 }
 
 // MineBlock 使用提供的交易挖掘一个新块
-func (bc *Blockchain) MineBlock(transactions []*Transaction) {
+func (bc *Blockchain) MineBlock(transactions []*Transaction) *Block {
 	var lastHash []byte
 
 	// 在一笔交易被放入一个块之前进行验证：
@@ -73,7 +73,7 @@ func (bc *Blockchain) MineBlock(transactions []*Transaction) {
 	// BboltDB 只读事务
 	// 从数据库中获取最后一个块的哈希，然后用它来挖出一个新的块的哈希
 	err := bc.DB.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(blocksBucket))
+		b := tx.Bucket([]byte(BLOCKS_BUCKET))
 		lastHash = b.Get([]byte("l"))
 
 		return nil
@@ -88,7 +88,7 @@ func (bc *Blockchain) MineBlock(transactions []*Transaction) {
 	// BboltDB 读写事物
 	// 向数据库写入最后一个块的哈希
 	err = bc.DB.Update(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(blocksBucket))
+		b := tx.Bucket([]byte(BLOCKS_BUCKET))
 		err := b.Put(newBlock.Hash, newBlock.Serialize())
 		if err != nil {
 			log.Panic(err)
@@ -107,6 +107,8 @@ func (bc *Blockchain) MineBlock(transactions []*Transaction) {
 	if err != nil {
 		log.Panic(err)
 	}
+
+	return newBlock
 }
 
 // CreateBlockchain 获取一个地址，该地址将获得挖掘创世块的奖励
@@ -117,16 +119,16 @@ func CreateBlockchain(address string) *Blockchain {
 	}
 
 	var tip []byte
-	db, err := bbolt.Open(dbFile, 0600, nil)
+	db, err := bbolt.Open(DB_FILE, 0600, nil)
 	if err != nil {
 		log.Panic(err)
 	}
 
 	err = db.Update(func(tx *bbolt.Tx) error {
-		cbtx := NewCoinbaseTX(address, genesisCoinbaseData)
+		cbtx := NewCoinbaseTX(address, GENESIS_COINBASE_DATA)
 		genesis := NewGenesisBlock(cbtx)
 
-		b, err := tx.CreateBucket([]byte(blocksBucket))
+		b, err := tx.CreateBucket([]byte(BLOCKS_BUCKET))
 		if err != nil {
 			log.Panic(err)
 		}
@@ -159,9 +161,9 @@ func (blockchain *Blockchain) Iterator() *BlockchainIterator {
 	return &BlockchainIterator{blockchain.tip, blockchain.DB}
 }
 
-// FindUnspentTransactions 返回包含未使用输出的交易列表
-func (blockchain *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []Transaction {
-	var unspentTXs []Transaction
+// FindUTXO 找到所有未花费的交易输出
+func (blockchain *Blockchain) FindUTXO() map[string]TXOutputs {
+	UTXO := make(map[string]TXOutputs)
 	spentTXOs := make(map[string][]int)
 	bci := blockchain.Iterator()
 
@@ -173,7 +175,7 @@ func (blockchain *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []Trans
 
 			// 查找该地址对应的所有输出
 		Outputs:
-			for outIndex, out := range tx.Vout {
+			for outIndex, out := range tx.VOut {
 				// UTXO 未花费的输出意味着这些输出未在任何输入中引用
 				// 检查该输出是否已经被包含在一个交易的输入中，检查它是否已经被花费了
 				// 跳过那些已经被包含在其他输入中的输出，说明这个输出已经被花费，无法再用了
@@ -185,11 +187,9 @@ func (blockchain *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []Trans
 					}
 				}
 
-				// 如果一个输出能够被当前搜索 UTXO 的同一地址锁定
-				// 那么这就是需要的输出
-				if out.IsLockedWithKey(pubKeyHash) {
-					unspentTXs = append(unspentTXs, *tx)
-				}
+				outs := UTXO[txID]
+				outs.Outputs = append(outs.Outputs, out)
+				UTXO[txID] = outs
 			}
 
 			// 检查完输出以后，将给定地址所有能够解锁输出的输入聚集起来
@@ -197,10 +197,8 @@ func (blockchain *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []Trans
 			// 这不适用于 coinbase 交易，因为它们不解锁输出
 			if !tx.IsCoinbase() {
 				for _, in := range tx.VIn {
-					if in.UsesKey(pubKeyHash) {
-						inTxID := hex.EncodeToString(in.TxID)
-						spentTXOs[inTxID] = append(spentTXOs[inTxID], in.VOut)
-					}
+					inTxID := hex.EncodeToString(in.TxID)
+					spentTXOs[inTxID] = append(spentTXOs[inTxID], in.VOut)
 				}
 			}
 
@@ -211,49 +209,7 @@ func (blockchain *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []Trans
 		}
 	}
 
-	return unspentTXs
-}
-
-// FindUTXOs 查找并返回所有未使用的交易输出
-func (blockchain *Blockchain) FindUTXOs(pubKeyHash []byte) []TXOutput {
-	var UTXOs []TXOutput
-	// 从交易中剥离 UTXO
-	unspentTransactions := blockchain.FindUnspentTransactions(pubKeyHash)
-
-	for _, tx := range unspentTransactions {
-		for _, out := range tx.Vout {
-			if out.IsLockedWithKey(pubKeyHash) {
-				UTXOs = append(UTXOs, out)
-			}
-		}
-	}
-
-	return UTXOs
-}
-
-// FindSpendableOutputs 查找地址中满足 amount 的 UTXO
-func (blockchain *Blockchain) FindSpendableOutputs(pubKeyHash []byte, amount int) (int, map[string][]int) {
-	unspentOutputs := make(map[string][]int)
-	unspentTXs := blockchain.FindUnspentTransactions(pubKeyHash)
-	accumulation := 0
-
-Work:
-	for _, tx := range unspentTXs {
-		txID := hex.EncodeToString(tx.ID)
-
-		for outIndex, out := range tx.Vout {
-			if out.IsLockedWithKey(pubKeyHash) && accumulation < amount {
-				accumulation += out.Value
-				unspentOutputs[txID] = append(unspentOutputs[txID], outIndex)
-
-				if accumulation >= amount {
-					break Work
-				}
-			}
-		}
-	}
-
-	return accumulation, unspentOutputs
+	return UTXO
 }
 
 // FindTransaction 根据交易 ID 查找并返回交易
@@ -294,6 +250,10 @@ func (bc *Blockchain) SignTransaction(tx *Transaction, privKey ecdsa.PrivateKey)
 
 // VerifyTransaction 传入一笔交易，找到它引用的交易，然后对它进行验证
 func (bc *Blockchain) VerifyTransaction(tx *Transaction) bool {
+	if tx.IsCoinbase() {
+		return true
+	}
+
 	prevTXs := make(map[string]Transaction)
 
 	for _, vin := range tx.VIn {

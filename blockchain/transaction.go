@@ -22,7 +22,7 @@ const subsidy = 10
 type Transaction struct {
 	ID   []byte
 	VIn  []TXInput
-	Vout []TXOutput
+	VOut []TXOutput
 }
 
 // SetID 设置交易ID
@@ -67,7 +67,7 @@ func (tx *Transaction) Hash() []byte {
 }
 
 // NewUTXOTransaction 创建交易
-func NewUTXOTransaction(from string, to string, amount int, blockchain *Blockchain) *Transaction {
+func NewUTXOTransaction(from string, to string, amount int, UTXOSet *UTXOSet) *Transaction {
 	var inputs []TXInput
 	var outputs []TXOutput
 
@@ -80,7 +80,7 @@ func NewUTXOTransaction(from string, to string, amount int, blockchain *Blockcha
 	pubKeyHash := wallet.HashPubKey(wlt.PublicKey)
 
 	// 找到足够的未花费输出
-	accumulation, validOutputs := blockchain.FindSpendableOutputs(pubKeyHash, amount)
+	accumulation, validOutputs := UTXOSet.FindSpendableOutputs(pubKeyHash, amount)
 
 	if accumulation < amount {
 		log.Panic("ERROR: Not enough funds")
@@ -115,7 +115,7 @@ func NewUTXOTransaction(from string, to string, amount int, blockchain *Blockcha
 
 	tx := Transaction{nil, inputs, outputs}
 	tx.ID = tx.Hash()
-	blockchain.SignTransaction(&tx, wlt.PrivateKey)
+	UTXOSet.Blockchain.SignTransaction(&tx, wlt.PrivateKey)
 
 	return &tx
 }
@@ -148,7 +148,7 @@ func (tx *Transaction) TrimmedCopy() Transaction {
 		inputs = append(inputs, TXInput{vin.TxID, vin.VOut, nil, nil})
 	}
 
-	for _, vout := range tx.Vout {
+	for _, vout := range tx.VOut {
 		outputs = append(outputs, TXOutput{vout.Value, vout.PubKeyHash})
 	}
 
@@ -179,7 +179,7 @@ func (tx *Transaction) Sign(privKey ecdsa.PrivateKey, prevTXs map[string]Transac
 		// 对于每个 TXI 为了确保万无一失，再次将 Signature 字段设置为 nil
 		txCopy.VIn[inID].Signature = nil
 		// 将 TXI 的 PubKey 设置为其所引用的 TXO 的 PubKeyHash
-		txCopy.VIn[inID].PubKey = prevTx.Vout[vin.VOut].PubKeyHash
+		txCopy.VIn[inID].PubKey = prevTx.VOut[vin.VOut].PubKeyHash
 		// Hash 方法将交易序列化并通过 SHA-256 进行哈希，生成的哈希结果就是待签名的数据
 		txCopy.ID = txCopy.Hash()
 		// 将 PubKey 字段重新设置为 nil 避免影响后续的迭代
@@ -209,7 +209,7 @@ func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 		// 这个过程和 Sign 方法是一致的，因为验证的数据需要和签名的数据是一致的
 		prevTx := prevTXs[hex.EncodeToString(vin.TxID)]
 		txCopy.VIn[inID].Signature = nil
-		txCopy.VIn[inID].PubKey = prevTx.Vout[vin.VOut].PubKeyHash
+		txCopy.VIn[inID].PubKey = prevTx.VOut[vin.VOut].PubKeyHash
 		txCopy.ID = txCopy.Hash()
 		txCopy.VIn[inID].PubKey = nil
 
