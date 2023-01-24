@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log"
 	"math/big"
-
 	"tchain/wallet"
 )
 
@@ -67,16 +66,10 @@ func (tx *Transaction) Hash() []byte {
 }
 
 // NewUTXOTransaction 创建交易
-func NewUTXOTransaction(from string, to string, amount int, UTXOSet *UTXOSet) *Transaction {
+func NewUTXOTransaction(wlt *wallet.Wallet, to string, amount int, UTXOSet *UTXOSet) *Transaction {
 	var inputs []TXInput
 	var outputs []TXOutput
 
-	wallets, err := wallet.NewWallets()
-	if err != nil {
-		log.Panic(err)
-	}
-
-	wlt := wallets.GetWallet(from)
 	pubKeyHash := wallet.HashPubKey(wlt.PublicKey)
 
 	// 找到足够的未花费输出
@@ -103,6 +96,8 @@ func NewUTXOTransaction(from string, to string, amount int, UTXOSet *UTXOSet) *T
 		}
 	}
 
+	from := fmt.Sprintf("%s", wlt.GetAddress())
+
 	outputs = append(
 		outputs,
 		*NewTXOutput(amount, to),
@@ -123,12 +118,18 @@ func NewUTXOTransaction(from string, to string, amount int, UTXOSet *UTXOSet) *T
 // NewCoinbaseTX 创建一个 coinbase 交易
 func NewCoinbaseTX(to, data string) *Transaction {
 	if data == "" {
-		data = fmt.Sprintf("Reward to '%s'", to)
+		randData := make([]byte, 20)
+		_, err := rand.Read(randData)
+		if err != nil {
+			log.Panic(err)
+		}
+
+		data = fmt.Sprintf("%x", randData)
 	}
 
-	txin := TXInput{[]byte{}, -1, nil, []byte(data)}
-	txout := NewTXOutput(subsidy, to)
-	tx := Transaction{nil, []TXInput{txin}, []TXOutput{*txout}}
+	txIn := TXInput{[]byte{}, -1, nil, []byte(data)}
+	txOut := NewTXOutput(subsidy, to)
+	tx := Transaction{nil, []TXInput{txIn}, []TXOutput{*txOut}}
 	tx.ID = tx.Hash()
 
 	return &tx
@@ -180,13 +181,11 @@ func (tx *Transaction) Sign(privKey ecdsa.PrivateKey, prevTXs map[string]Transac
 		txCopy.VIn[inID].Signature = nil
 		// 将 TXI 的 PubKey 设置为其所引用的 TXO 的 PubKeyHash
 		txCopy.VIn[inID].PubKey = prevTx.VOut[vin.VOut].PubKeyHash
-		// Hash 方法将交易序列化并通过 SHA-256 进行哈希，生成的哈希结果就是待签名的数据
-		txCopy.ID = txCopy.Hash()
-		// 将 PubKey 字段重新设置为 nil 避免影响后续的迭代
-		txCopy.VIn[inID].PubKey = nil
 
-		// 使用 ECDSA 签名算法通过私钥 privKey 对 txCopy.ID 进行签名，生成一对数字序列
-		r, s, err := ecdsa.Sign(rand.Reader, &privKey, txCopy.ID)
+		dataToSign := fmt.Sprintf("%x\n", txCopy)
+
+		r, s, err := ecdsa.Sign(rand.Reader, &privKey, []byte(dataToSign))
+
 		if err != nil {
 			log.Panic(err)
 		}
@@ -194,11 +193,22 @@ func (tx *Transaction) Sign(privKey ecdsa.PrivateKey, prevTXs map[string]Transac
 		signature := append(r.Bytes(), s.Bytes()...)
 
 		tx.VIn[inID].Signature = signature
+		txCopy.VIn[inID].PubKey = nil
 	}
 }
 
 // Verify 对交易的签名进行验证
 func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
+	if tx.IsCoinbase() {
+		return true
+	}
+
+	for _, vin := range tx.VIn {
+		if prevTXs[hex.EncodeToString(vin.TxID)].ID == nil {
+			log.Panic("ERROR: Previous transaction is not correct")
+		}
+	}
+
 	txCopy := tx.TrimmedCopy()
 
 	// 创建椭圆曲线用于生成键值对
@@ -210,8 +220,6 @@ func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 		prevTx := prevTXs[hex.EncodeToString(vin.TxID)]
 		txCopy.VIn[inID].Signature = nil
 		txCopy.VIn[inID].PubKey = prevTx.VOut[vin.VOut].PubKeyHash
-		txCopy.ID = txCopy.Hash()
-		txCopy.VIn[inID].PubKey = nil
 
 		// 解包存储在 TXInput.Signature 和 TXInput.PubKey 中的值，因为一个签名就是一对数字，一个公钥就是一对坐标
 		// 之前为了存储将它们连接在一起，现在我们需要对它们进行解包在 crypto/ecdsa 函数中使用
@@ -227,16 +235,32 @@ func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 		x.SetBytes(vin.PubKey[:(keyLen / 2)])
 		y.SetBytes(vin.PubKey[(keyLen / 2):])
 
+		dataToVerify := fmt.Sprintf("%x\n", txCopy)
+
 		// 从输入提取的公钥创建一个 ecdsa.PublicKey
 		rawPubKey := ecdsa.PublicKey{curve, &x, &y}
 
 		// 通过传入输入中提取的签名执行 ecdsa.Verify
 		// 如果所有的输入都被验证，返回 true
 		// 如果有任何一个验证失败，返回 false
-		if !ecdsa.Verify(&rawPubKey, txCopy.ID, &r, &s) {
+		if ecdsa.Verify(&rawPubKey, []byte(dataToVerify), &r, &s) == false {
 			return false
 		}
+		txCopy.VIn[inID].PubKey = nil
 	}
 
 	return true
+}
+
+// DeserializeTransaction deserializes a transaction
+func DeserializeTransaction(data []byte) Transaction {
+	var transaction Transaction
+
+	decoder := gob.NewDecoder(bytes.NewReader(data))
+	err := decoder.Decode(&transaction)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	return transaction
 }

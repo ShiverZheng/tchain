@@ -12,7 +12,7 @@ import (
 	"go.etcd.io/bbolt"
 )
 
-const DB_FILE = "blockchain.db"
+const DB_FILE = "blockchain_%s.db"
 const BLOCKS_BUCKET = "blocks"
 const GENESIS_COINBASE_DATA = "Blockchain Research Group"
 
@@ -23,8 +23,8 @@ type Blockchain struct {
 }
 
 // dbExists 检查数据库是否存在
-func dbExists() bool {
-	if _, err := os.Stat(DB_FILE); os.IsNotExist(err) {
+func dbExists(dbFile string) bool {
+	if _, err := os.Stat(dbFile); os.IsNotExist(err) {
 		return false
 	}
 
@@ -32,14 +32,15 @@ func dbExists() bool {
 }
 
 // NewBlockchain 创建一个有创世块的区块链
-func NewBlockchain() *Blockchain {
-	if !dbExists() {
+func NewBlockchain(nodeID string) *Blockchain {
+	dbFile := fmt.Sprintf(DB_FILE, nodeID)
+	if dbExists(dbFile) == false {
 		fmt.Println("No existing blockchain found. Create one first.")
 		os.Exit(1)
 	}
 
 	var tip []byte
-	db, err := bbolt.Open(DB_FILE, 0600, nil)
+	db, err := bbolt.Open(dbFile, 0600, nil)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -54,18 +55,54 @@ func NewBlockchain() *Blockchain {
 		log.Panic(err)
 	}
 
-	blockchain := Blockchain{tip, db}
+	bc := Blockchain{tip, db}
 
-	return &blockchain
+	return &bc
+}
+
+// AddBlock 将块保存到区块链中
+func (bc *Blockchain) AddBlock(block *Block) {
+	err := bc.DB.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(BLOCKS_BUCKET))
+		blockInDB := b.Get(block.Hash)
+
+		if blockInDB != nil {
+			return nil
+		}
+
+		blockData := block.Serialize()
+		err := b.Put(block.Hash, blockData)
+		if err != nil {
+			log.Panic(err)
+		}
+
+		lastHash := b.Get([]byte("l"))
+		lastBlockData := b.Get(lastHash)
+		lastBlock := DeserializeBlock(lastBlockData)
+
+		if block.Height > lastBlock.Height {
+			err = b.Put([]byte("l"), block.Hash)
+			if err != nil {
+				log.Panic(err)
+			}
+			bc.tip = block.Hash
+		}
+
+		return nil
+	})
+	if err != nil {
+		log.Panic(err)
+	}
 }
 
 // MineBlock 使用提供的交易挖掘一个新块
 func (bc *Blockchain) MineBlock(transactions []*Transaction) *Block {
 	var lastHash []byte
+	var lastHeight int
 
 	// 在一笔交易被放入一个块之前进行验证：
 	for _, tx := range transactions {
-		if !bc.VerifyTransaction(tx) {
+		if bc.VerifyTransaction(tx) != true {
 			log.Panic("ERROR: Invalid transaction")
 		}
 	}
@@ -76,6 +113,11 @@ func (bc *Blockchain) MineBlock(transactions []*Transaction) *Block {
 		b := tx.Bucket([]byte(BLOCKS_BUCKET))
 		lastHash = b.Get([]byte("l"))
 
+		blockData := b.Get(lastHash)
+		block := DeserializeBlock(blockData)
+
+		lastHeight = block.Height
+
 		return nil
 	})
 
@@ -83,7 +125,7 @@ func (bc *Blockchain) MineBlock(transactions []*Transaction) *Block {
 		log.Panic(err)
 	}
 
-	newBlock := NewBlock(transactions, lastHash)
+	newBlock := NewBlock(transactions, lastHash, lastHeight+1)
 
 	// BboltDB 读写事物
 	// 向数据库写入最后一个块的哈希
@@ -112,21 +154,22 @@ func (bc *Blockchain) MineBlock(transactions []*Transaction) *Block {
 }
 
 // CreateBlockchain 获取一个地址，该地址将获得挖掘创世块的奖励
-func CreateBlockchain(address string) *Blockchain {
-	if dbExists() {
+func CreateBlockchain(address string, nodeID string) *Blockchain {
+	dbFile := fmt.Sprintf(DB_FILE, nodeID)
+	if dbExists(dbFile) {
 		fmt.Println("Blockchain already exists.")
 		os.Exit(1)
 	}
 
 	var tip []byte
-	db, err := bbolt.Open(DB_FILE, 0600, nil)
+	db, err := bbolt.Open(dbFile, 0600, nil)
 	if err != nil {
 		log.Panic(err)
 	}
 
 	err = db.Update(func(tx *bbolt.Tx) error {
-		cbtx := NewCoinbaseTX(address, GENESIS_COINBASE_DATA)
-		genesis := NewGenesisBlock(cbtx)
+		coinbaseTX := NewCoinbaseTX(address, GENESIS_COINBASE_DATA)
+		genesis := NewGenesisBlock(coinbaseTX)
 
 		b, err := tx.CreateBucket([]byte(BLOCKS_BUCKET))
 		if err != nil {
@@ -220,7 +263,7 @@ func (bc *Blockchain) FindTransaction(ID []byte) (Transaction, error) {
 		block := bci.Next()
 
 		for _, tx := range block.Transactions {
-			if bytes.Equal(tx.ID, ID) {
+			if bytes.Compare(tx.ID, ID) == 0 {
 				return *tx, nil
 			}
 		}
@@ -265,4 +308,65 @@ func (bc *Blockchain) VerifyTransaction(tx *Transaction) bool {
 	}
 
 	return tx.Verify(prevTXs)
+}
+
+// GetBestHeight 返回最后一个块的高度
+func (bc *Blockchain) GetBestHeight() int {
+	var lastBlock Block
+
+	err := bc.DB.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(BLOCKS_BUCKET))
+		lastHash := b.Get([]byte("l"))
+		blockData := b.Get(lastHash)
+		lastBlock = *DeserializeBlock(blockData)
+
+		return nil
+	})
+	if err != nil {
+		log.Panic(err)
+	}
+
+	return lastBlock.Height
+}
+
+// GetBlock 通过 hash 找到块k
+func (bc *Blockchain) GetBlock(blockHash []byte) (Block, error) {
+	var block Block
+
+	err := bc.DB.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(BLOCKS_BUCKET))
+
+		blockData := b.Get(blockHash)
+
+		if blockData == nil {
+			return errors.New("Block is not found.")
+		}
+
+		block = *DeserializeBlock(blockData)
+
+		return nil
+	})
+	if err != nil {
+		return block, err
+	}
+
+	return block, nil
+}
+
+// GetBlockHashes 返回链中所有块的哈希列表
+func (bc *Blockchain) GetBlockHashes() [][]byte {
+	var blocks [][]byte
+	bci := bc.Iterator()
+
+	for {
+		block := bci.Next()
+
+		blocks = append(blocks, block.Hash)
+
+		if len(block.PrevBlockHash) == 0 {
+			break
+		}
+	}
+
+	return blocks
 }

@@ -53,7 +53,7 @@ func (out *TXOutput) Lock(address []byte) {
 
 // IsLockedWithKey 输出解锁方法，检查地址是否发起了交易
 func (out *TXOutput) IsLockedWithKey(pubKeyHash []byte) bool {
-	return bytes.Equal(out.PubKeyHash, pubKeyHash)
+	return bytes.Compare(out.PubKeyHash, pubKeyHash) == 0
 }
 
 // NewTXOutput 创建一盒新的 TXOutput
