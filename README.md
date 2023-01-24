@@ -383,7 +383,7 @@ $ ./tchain-amd send -from <YOUR_ADDRESS> -to <YOUR_ADDRESS> -amount <AMOUNT>
 ```bash
 $ ./tchain-amd printchain
 ```
-启动节点j：
+启动节点：
 ```bash
 $ ./tchain-amd startnode
 ```
