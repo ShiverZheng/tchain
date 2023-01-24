@@ -15,7 +15,8 @@ type Block struct {
 	PrevBlockHash []byte         // 前一个块的哈希
 	Hash          []byte         // 当前块的哈希
 	Transactions  []*Transaction // 区块实际存储的交易信息
-	Nonce         int
+	Nonce         int            // 随机数
+	Height        int            // 块的高度k
 }
 
 // Serialize 序列化区块
@@ -62,13 +63,14 @@ func (b *Block) HashTransactions() []byte {
 }
 
 // NewBlock 基于 Data 和 PrevBlockHash 计算得到当前块的哈希，创建并返回区块
-func NewBlock(transactions []*Transaction, prevBlockHash []byte) *Block {
+func NewBlock(transactions []*Transaction, prevBlockHash []byte, height int) *Block {
 	block := &Block{
 		Timestamp:     time.Now().Unix(),
 		PrevBlockHash: prevBlockHash,
 		Hash:          []byte{},
 		Transactions:  transactions,
 		Nonce:         0,
+		Height:        height,
 	}
 
 	pow := NewProofOfWork(block)
@@ -82,5 +84,5 @@ func NewBlock(transactions []*Transaction, prevBlockHash []byte) *Block {
 
 // NewGenesisBlock 生成创世块
 func NewGenesisBlock(coinbase *Transaction) *Block {
-	return NewBlock([]*Transaction{coinbase}, []byte{})
+	return NewBlock([]*Transaction{coinbase}, []byte{}, 0)
 }

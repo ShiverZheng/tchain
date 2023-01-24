@@ -8,11 +8,11 @@ import (
 	"tchain/wallet"
 )
 
-func (cli *CLI) getBalance(address string) {
+func (cli *CLI) getBalance(address string, nodeID string) {
 	if !wallet.ValidateAddress(address) {
 		log.Panic("ERROR: Address is not valid")
 	}
-	bc := blockchain.NewBlockchain()
+	bc := blockchain.NewBlockchain(nodeID)
 	UTXOSet := blockchain.UTXOSet{Blockchain: bc}
 	defer bc.DB.Close()
 

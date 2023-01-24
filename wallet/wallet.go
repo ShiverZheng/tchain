@@ -14,8 +14,7 @@ import (
 )
 
 const version = byte(0x00)
-const walletFile = "wallet.dat"
-const addressChecksumLen = 4
+const ADDRESS_CHECK_SUM_LEN = 4
 
 // Wallet stores private and public keys
 type Wallet struct {
@@ -50,10 +49,9 @@ func HashPubKey(pubKey []byte) []byte {
 	if err != nil {
 		log.Panic(err)
 	}
+	publicRIPEMD160 := RIPEMD160Hasher.Sum(nil)
 
-	result := RIPEMD160Hasher.Sum(nil)
-
-	return result
+	return publicRIPEMD160
 
 }
 
@@ -74,16 +72,16 @@ func checksum(payload []byte) []byte {
 	firstSHA := sha256.Sum256(payload)
 	secondSHA := sha256.Sum256(firstSHA[:])
 
-	return secondSHA[:addressChecksumLen]
+	return secondSHA[:ADDRESS_CHECK_SUM_LEN]
 }
 
 // ValidateAddress check if address if valid
 func ValidateAddress(address string) bool {
 	pubKeyHash := common.Base58Decode([]byte(address))
-	actualChecksum := pubKeyHash[len(pubKeyHash)-addressChecksumLen:]
+	actualChecksum := pubKeyHash[len(pubKeyHash)-ADDRESS_CHECK_SUM_LEN:]
 	version := pubKeyHash[0]
-	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-addressChecksumLen]
+	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-ADDRESS_CHECK_SUM_LEN]
 	targetChecksum := checksum(append([]byte{version}, pubKeyHash...))
 
-	return bytes.Equal(actualChecksum, targetChecksum)
+	return bytes.Compare(actualChecksum, targetChecksum) == 0
 }

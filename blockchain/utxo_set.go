@@ -7,7 +7,7 @@ import (
 	"go.etcd.io/bbolt"
 )
 
-const UTXO_BUCKET = "chain_state"
+const UTXO_BUCKET = "chainstate"
 
 // UTXOSet UTXO 集合
 type UTXOSet struct {
@@ -21,10 +21,10 @@ func (u UTXOSet) FindSpendableOutputs(pubKeyHash []byte, amount int) (int, map[s
 	db := u.Blockchain.DB
 
 	err := db.View(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket([]byte(UTXO_BUCKET))
-		cursor := bucket.Cursor()
+		b := tx.Bucket([]byte(UTXO_BUCKET))
+		c := b.Cursor()
 
-		for k, v := cursor.First(); k != nil; k, v = cursor.Next() {
+		for k, v := c.First(); k != nil; k, v = c.Next() {
 			txID := hex.EncodeToString(k)
 			outs := DeserializeOutputs(v)
 
@@ -174,4 +174,26 @@ func (u UTXOSet) Update(block *Block) {
 	if err != nil {
 		log.Panic(err)
 	}
+}
+
+// CountTransactions 返回 UTXO 集中的交易数量
+func (u UTXOSet) CountTransactions() int {
+	db := u.Blockchain.DB
+	counter := 0
+
+	err := db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(UTXO_BUCKET))
+		c := b.Cursor()
+
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			counter++
+		}
+
+		return nil
+	})
+	if err != nil {
+		log.Panic(err)
+	}
+
+	return counter
 }

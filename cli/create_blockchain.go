@@ -7,11 +7,11 @@ import (
 	"tchain/wallet"
 )
 
-func (cli *CLI) createBlockchain(address string) {
+func (cli *CLI) createBlockchain(address string, nodeID string) {
 	if !wallet.ValidateAddress(address) {
 		log.Panic("ERROR: Address is not valid")
 	}
-	bc := blockchain.CreateBlockchain(address)
+	bc := blockchain.CreateBlockchain(address, nodeID)
 	defer bc.DB.Close()
 
 	// 当一个新的区块链被创建以后，就会立刻进行重建索引
